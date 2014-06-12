@@ -9,9 +9,8 @@ from cStringIO import StringIO
 from functools import partial
 import json
 from logging import getLogger
-import os.path
 import sys
-from urllib import unquote_plus as unquote
+from urllib import unquote_plus
 from urlparse import urlparse, parse_qs
 
 from lxml import etree
@@ -109,7 +108,7 @@ class ServiceMock(object):
 
         raise NotImplementedError(
             "No route in service mock matches request '{0} {1}', tried to match following:\n'{2}'".format(
-                req.method, unquote(req.url), "';\n'".join([unquote(str(r)) for r in self.routes])
+                req.method, unquote_plus(req.url), "';\n'".join([unquote_plus(str(r)) for r in self.routes])
             )
         )
 
@@ -124,7 +123,7 @@ class ServiceMock(object):
             except ValueError:
                 raise ValueError(
                     'Could not unpack {0!s} to (code, body) tuple that is a result to request {1} {2!s}'.format(
-                        handler, unquote(request.url), request)
+                        handler, unquote_plus(request.url), request)
                 )
         elif isinstance(handler, HTTPResponse):
             return handler

@@ -118,6 +118,15 @@ class XmlProducer(object):
             self.handler.set_header('Content-Type', 'application/xml; charset=utf-8')
         callback(self.doc.to_string())
 
+    def write_error(self, status_code, exception):
+        self.doc.clear()
+        self.doc.root_node = etree.Element('error', status_code=str(status_code))
+
+        if hasattr(exception, 'log_message'):
+            self.doc.put(etree.Element('message', exception.log_message))
+        elif exception is not None:
+            self.doc.put(etree.Element('message', str(exception)))
+
     def xml_from_file(self, filename):
         return self.xml_cache.load(filename, self.log)
 

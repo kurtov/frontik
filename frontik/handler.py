@@ -18,6 +18,8 @@ import frontik.handler_active_limit
 from frontik.handler_debug import PageHandlerDebug
 from frontik.http_client import HttpClient
 import frontik.util
+import frontik.producers
+from frontik.producers import Producers
 import frontik.producers.json_producer
 import frontik.producers.xml_producer
 from frontik.http_codes import process_status_code
@@ -78,8 +80,8 @@ class BaseHandler(tornado.web.RequestHandler):
         if hasattr(self.config, 'postprocessor'):
             self.add_template_postprocessor(self.config.postprocessor)
 
-        self.text = None
         self._sentry_handler = None
+        self.content_type = None
 
     def __repr__(self):
         return '.'.join([self.__module__, self.__class__.__name__])
@@ -92,6 +94,15 @@ class BaseHandler(tornado.web.RequestHandler):
         self.active_limit = frontik.handler_active_limit.PageHandlerActiveLimit(self)
         self.debug = PageHandlerDebug(self)
 
+        if self.content_type is None:
+            self.log.info('producer content type is not set')
+        else:
+            self.log.info('using %s producer content type', self.content_type)
+
+        producers = BaseHandler._get_producers_mixins().get(self.content_type)
+        if producers is None:
+            raise ValueError('invalid producer content type: {}'.format(self.content_type))
+
         self.json_producer = frontik.producers.json_producer.JsonProducer(
             self, self.application.json, getattr(self, 'json_encoder', None))
         self.json = self.json_producer.json
@@ -99,6 +110,15 @@ class BaseHandler(tornado.web.RequestHandler):
         self.xml_producer = frontik.producers.xml_producer.XmlProducer(self, self.application.xml)
         self.xml = self.xml_producer  # deprecated synonym
         self.doc = self.xml_producer.doc
+        self.text = None
+
+        if JsonProducerMixin not in producers:
+            self.json_producer = frontik.producers.create_logging_proxy(self.log, self.json_producer)
+            self.json = frontik.producers.create_logging_proxy(self.log, self.json)
+
+        if XmlProducerMixin not in producers:
+            self.xml_producer = frontik.producers.create_logging_proxy(self.log, self.xml_producer)
+            self.doc = frontik.producers.create_logging_proxy(self.log, self.doc)
 
         if frontik.util.get_cookie_or_url_param_value(self, 'nopost') is not None:
             self.require_debug_access()
@@ -256,12 +276,15 @@ class BaseHandler(tornado.web.RequestHandler):
             def _callback():
                 self.log.stage_tag('page')
 
-                if self.text is not None:
-                    producer = self._generic_producer
-                elif not self.json.is_empty():
-                    producer = self.json_producer
-                else:
-                    producer = self.xml_producer
+                producer = self._get_producers().get(self.content_type)
+                if producer is None:
+                    # TODO: deprecated backwards-compatible logic
+                    if self.text is not None:
+                        producer = self._generic_producer
+                    elif not self.json.is_empty():
+                        producer = self.json_producer
+                    else:
+                        producer = self.xml_producer
 
                 self.log.debug('using %s producer', producer)
 
@@ -336,6 +359,9 @@ class BaseHandler(tornado.web.RequestHandler):
                 self.set_header(name, value)
 
         if finish_with_exception:
+            # Old backward-compatible logic based on exception attributes
+            # TODO: deprecated, use content_type and write_error overriding
+
             self.json.clear()
 
             if getattr(exception, 'text', None) is not None:
@@ -350,6 +376,13 @@ class BaseHandler(tornado.web.RequestHandler):
                 # cannot clear self.doc due to backwards compatibility, a bug actually
                 self.doc.put(exception.xml)
 
+            self.finish_with_postprocessors()
+            return
+
+        elif self.content_type is not None:
+            producer = self._get_producers().get(self.content_type)
+            if hasattr(producer, 'write_error'):
+                producer.write_error(status_code, exception)
             self.finish_with_postprocessors()
             return
 
@@ -464,11 +497,31 @@ class BaseHandler(tornado.web.RequestHandler):
 
     # Producers
 
+    def _get_producers(self):
+        return {
+            Producers.JSON: self.json_producer,
+            Producers.XML: self.xml_producer,
+            Producers.GENERIC: self._generic_producer
+        }
+
+    @staticmethod
+    def _get_producers_mixins():
+        return {
+            # If content_type is not set, all producers are included by default
+            # TODO: remove this backwards-compatible logic
+            None: (JsonProducerMixin, XmlProducerMixin, GenericProducerMixin),
+            Producers.JSON: (JsonProducerMixin,),
+            Producers.XML: (XmlProducerMixin,),
+            Producers.GENERIC: (GenericProducerMixin,)
+        }
+
+    # TODO: move all producer-specific methods to producers mixins
+
     def _generic_producer(self, callback):
         self.log.debug('finishing plaintext')
         callback(self.text)
 
-    # Deprecated, use self.text directly
+    # TODO: remove this deprecated method
     def set_plaintext_response(self, text):
         self.text = text
 
@@ -563,3 +616,21 @@ class ErrorHandler(tornado.web.ErrorHandler, PageHandler):
 
 class RedirectHandler(tornado.web.RedirectHandler, PageHandler):
     pass
+
+
+class JsonProducerMixin(BaseHandler):
+    def prepare(self):
+        self.content_type = Producers.JSON
+        super(JsonProducerMixin, self).prepare()
+
+
+class XmlProducerMixin(BaseHandler):
+    def prepare(self):
+        self.content_type = Producers.XML
+        super(XmlProducerMixin, self).prepare()
+
+
+class GenericProducerMixin(BaseHandler):
+    def prepare(self):
+        self.content_type = Producers.GENERIC
+        super(GenericProducerMixin, self).prepare()

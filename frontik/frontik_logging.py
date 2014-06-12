@@ -67,6 +67,7 @@ class RequestLogger(logging.LoggerAdapter):
         # backcompatibility with logger
         self.warn = self.warning
         self.addHandler = self.logger.addHandler
+        self.findCaller = self.logger.findCaller
 
     def register_handler(self, handler):
         self._handler = handler

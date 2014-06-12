@@ -83,5 +83,17 @@ class JsonProducer(object):
             self.handler.set_header('Content-Type', 'application/json; charset=utf-8')
         callback(self.json.to_string())
 
+    def write_error(self, status_code, exception):
+        self.json.clear()
+        self.json.put({
+            'error': True,
+            'status_code': status_code
+        })
+
+        if hasattr(exception, 'log_message'):
+            self.json.put({'message': exception.log_message})
+        elif exception is not None:
+            self.json.put({'message': str(exception)})
+
     def __repr__(self):
         return '{}.{}'.format(__package__, self.__class__.__name__)
