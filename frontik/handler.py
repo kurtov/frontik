@@ -12,6 +12,7 @@ from tornado.ioloop import IOLoop
 import tornado.options
 import tornado.web
 
+import frontik.argument_parser
 from frontik.async import AsyncGroup
 import frontik.auth
 import frontik.handler_active_limit
@@ -150,6 +151,47 @@ class BaseHandler(tornado.web.RequestHandler):
     def set_status(self, status_code, reason=None):
         status_code, reason = process_status_code(status_code, reason)
         super(BaseHandler, self).set_status(status_code, reason=reason)
+
+    Arg = frontik.argument_parser.Arg
+
+    def parse_arguments(self, arguments):
+        return {
+            name: self._parse_argument(name, param) for name, param in arguments.iteritems()
+        }
+
+    def _parse_argument(self, name, param):
+        if isinstance(param.param_type, list):
+            value = self.get_arguments(name)
+            if not value and param.has_default:
+                return param.default
+        else:
+            value = self.get_argument(name, default=None)
+            if value is None and param.has_default:
+                return param.default
+
+        if value is None:
+            raise HTTPError(400, 'parameter "{}" is missing'.format(name))
+
+        parser = frontik.argument_parser.get_parser(param.param_type)
+
+        try:
+            parsed_value = parser(value)
+        except ValueError:
+            if param.default_on_exception:
+                return param.default
+
+            if isinstance(param.param_type, list):
+                raise HTTPError(400, 'parameter "{}" must be of type [{}]'.format(name, param.param_type[0].__name__))
+
+            raise HTTPError(400, 'parameter "{}" must be of type {}'.format(name, param.param_type.__name__))
+
+        if param.choice is not None and parsed_value not in param.choice:
+            if param.default_on_exception:
+                return param.default
+
+            raise HTTPError(400, 'parameter "{}" must be one of the following: {}'.format(name, param.choice))
+
+        return parsed_value
 
     @staticmethod
     def add_callback(callback):
