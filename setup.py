@@ -30,7 +30,7 @@ class TestHook(test):
 
         import nose
         import logging
-        logging.disable(logging.CRITICAL)
+        logging.disable(logging.ERROR)
         nose.main(argv=['tests', '-v'])
 
 setup(
